@@ -1,11 +1,32 @@
-import {chromium,devices} from '@playwright/test';import assert from 'node:assert/strict';import {mkdir} from 'node:fs/promises';import {createServer} from '../scripts/serve.mjs';
-await mkdir('test-results',{recursive:true});const server=process.env.MICROMAN_URL?null:createServer(4201),base=process.env.MICROMAN_URL||'http://127.0.0.1:4201/',browser=await chromium.launch({channel:'chrome',headless:true}),errors=[];
+import {chromium,devices} from '@playwright/test';
+import assert from 'node:assert/strict';
+import {mkdir,writeFile} from 'node:fs/promises';
+import {createServer} from '../scripts/serve.mjs';
+await mkdir('test-results',{recursive:true});const server=createServer(4201),browser=await chromium.launch({channel:'chrome',headless:true}),errors=[];
 try{
- const desktop=await browser.newPage({viewport:{width:1280,height:900}});desktop.on('pageerror',e=>errors.push(e.message));await desktop.goto(base+'?debug');await desktop.waitForFunction(()=>!document.getElementById('solo').disabled);await desktop.screenshot({path:'test-results/lobby-desktop.png',fullPage:true});await desktop.locator('#solo').click();await desktop.waitForFunction(()=>micro.state?.time>1);await desktop.screenshot({path:'test-results/game-desktop.png'});
- for(const viewport of [{width:393,height:852},{width:844,height:390}]){
-  const context=await browser.newContext({...devices['Pixel 7'],viewport,deviceScaleFactor:1}),page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));await page.goto(base+'?debug');await page.locator('#solo').tap();await page.waitForFunction(()=>micro.state?.time>1);assert.ok(await page.locator('#controls').isVisible());assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-  const buttons=await Promise.all(['right','jump','fire'].map(k=>page.locator(`[data-key="${k}"]`).boundingBox())),session=await context.newCDPSession(page);const points=buttons.map((r,i)=>({x:r.x+r.width/2,y:r.y+r.height/2,id:i}));await session.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:points});await page.waitForTimeout(200);assert.ok(await page.evaluate(()=>micro.input().x===1&&micro.input().jump&&micro.input().fire));assert.ok(await page.evaluate(()=>micro.world.players[0].y<250));assert.ok(await page.evaluate(()=>micro.world.events.some(e=>e.type==='shoot')));await session.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});assert.equal(await page.evaluate(()=>micro.input().x),0);assert.equal(await page.evaluate(()=>micro.input().fire),false);await page.screenshot({path:`test-results/phone-${viewport.width}.png`});await context.close();
- }
- const failure=await browser.newPage();failure.on('pageerror',e=>errors.push(e.message));await failure.route('**/vendor/peerjs.min.js',route=>route.fulfill({contentType:'text/javascript',body:`window.Peer=class{constructor(){this.events={};setTimeout(()=>this.events.error?.({type:'network'}),20);}on(k,f){this.events[k]=f;}off(k){delete this.events[k];}destroy(){}};`}));await failure.goto(base+'?debug');await failure.locator('#host').click();await failure.waitForFunction(()=>document.getElementById('overlay-title').textContent==='Could not open the room');await failure.waitForTimeout(250);assert.ok(await failure.locator('#overlay').isVisible());await failure.locator('#overlay-secondary').click();await failure.waitForFunction(()=>micro.world.time>1);assert.equal(await failure.locator('#overlay').isVisible(),false);console.log('PASS: connection-service failure stays visible and solo fallback works.');
- assert.deepEqual(errors,[]);console.log('PASS: original room rendering, desktop, portrait/landscape phone layout, simultaneous real touch move + jump + fire, input release, no JS errors.');
-}finally{await browser.close();server?.close();}
+ const page=await browser.newPage({...devices['Pixel 7'],viewport:{width:393,height:852},deviceScaleFactor:1});page.on('pageerror',e=>errors.push(e.message));
+ await page.goto('http://127.0.0.1:4201/?debug');await page.locator('#solo').tap({timeout:30000});
+ await page.waitForFunction(()=>micro.native&&micro.state?.host?.state===2,{},{timeout:60000});
+ assert.equal(await page.evaluate(()=>crossOriginIsolated),true);
+ const before=await page.evaluate(()=>micro.native.inspect().host.x);
+ const cdp=await page.context().newCDPSession(page),right=await page.locator('[data-key=right]').boundingBox();
+ await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:right.x+right.width/2,y:right.y+right.height/2,id:1}]});await page.waitForTimeout(450);await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+ assert.ok(await page.evaluate(()=>micro.native.inspect().host.x)>before);
+ await page.evaluate(()=>micro.native.setPartner(true));await page.waitForTimeout(1000);
+ assert.ok(await page.evaluate(()=>micro.native.inspect().guest));
+ await page.screenshot({path:'test-results/original-phone-portrait.png'});
+ await page.setViewportSize({width:844,height:390});await page.waitForTimeout(300);
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+ await page.screenshot({path:'test-results/original-phone-landscape.png'});
+ const native=page.frames().find(f=>f.url().includes('/native/'));
+ await native.locator('#output').screenshot({path:'site/assets/original-preview.png'});
+ const tracks=await page.evaluate(()=>{const s=micro.native.stream();const r=s.getTracks().map(t=>t.kind);s.getVideoTracks().forEach(t=>t.stop());return r;});
+ assert.ok(tracks.includes('audio'),JSON.stringify(tracks));assert.ok(tracks.includes('video'));
+ await page.locator('#menu-toggle').tap();await page.locator('#native-menu').check();
+ await page.waitForFunction(()=>micro.native.output.width===640);
+ const full=await native.locator('#output').boundingBox(),scale=Math.min(full.width/640,full.height/480);
+ await page.touchscreen.tap(full.x+(full.width-640*scale)/2+41*scale,full.y+(full.height-480*scale)/2+51*scale);
+ await page.waitForTimeout(250);
+ await page.screenshot({path:'test-results/original-native-menu.png'});
+ assert.deepEqual(errors,[]);console.log('PASS: original executable, real touch movement, two native players, portrait/landscape layout, and audio/video capture.');
+}finally{await browser.close();server.close();}

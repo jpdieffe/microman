@@ -1,0 +1,9 @@
+#native-frame,#remote-video{width:100%;height:100%;display:block;border:0;object-fit:contain;background:#091820;image-rendering:pixelated}
+#native-frame{pointer-events:auto}
+#arena{background:#091820}
+#preview{width:100%;height:auto;display:block;image-rendering:pixelated}
+footer a{color:#b4ddd0}
+#enable-audio{pointer-events:auto;min-height:32px;font-size:10px;padding:5px 9px}
+.dpad{grid-template-columns:repeat(3,54px);grid-template-rows:repeat(3,45px)}
+@media(orientation:landscape) and (max-height:600px){.dpad{grid-template-columns:repeat(3,50px);grid-template-rows:repeat(3,42px)}.actions button{width:78px;height:78px}.top-hints{top:6px}.top-hints>span{font-size:8px}}
+@media(max-width:375px) and (orientation:portrait){.dpad{grid-template-columns:repeat(3,47px);grid-template-rows:repeat(3,43px)}.actions button{width:66px;height:70px}#controls{gap:8px;padding-left:8px;padding-right:8px}}

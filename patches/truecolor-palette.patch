@@ -1,0 +1,16 @@
+diff --git a/src/10e-gdi-metafile.wat b/src/10e-gdi-metafile.wat
+index d967cc1..cde3fea 100644
+--- a/src/10e-gdi-metafile.wat
++++ b/src/10e-gdi-metafile.wat
+@@ -87,7 +87,10 @@
+     (local $handle i32) (local $record i32) (local $count i32)
+     (local.set $handle (call $gdi_dc_selected_palette (local.get $hdc)))
+     (local.set $count (call $gdi_palette_count (local.get $handle)))
+-    (if (i32.ne (call $gdi_display_bpp) (i32.const 8)) (then (return (local.get $count))))
++    ;; A truecolor display has no physical palette entries to remap. Returning
++    ;; the logical count here makes MicroMan's WM_PALETTECHANGED handler
++    ;; broadcast another change recursively until its guest stack overflows.
++    (if (i32.ne (call $gdi_display_bpp) (i32.const 8)) (then (return (i32.const 0))))
+     (local.set $record (call $gdi_palette_record (local.get $handle)))
+     (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
+     (call $gdi_realize_palette_entries (local.get $handle)

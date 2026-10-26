@@ -1,0 +1,4 @@
+# Preserve every original file byte, including DOS text line endings.
+site/native/game/** -text
+assets/*.zip -text
+*.patch text eol=lf

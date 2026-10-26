@@ -1,0 +1,16 @@
+diff --git a/lib/renderer.js b/lib/renderer.js
+index a82e1e8..37020ec 100644
+--- a/lib/renderer.js
++++ b/lib/renderer.js
+@@ -206,6 +206,11 @@ class Win98Renderer {
+     this._createOffscreen = (w, h) => {
+       let cvs;
+       if (typeof OffscreenCanvas !== 'undefined') cvs = new OffscreenCanvas(w, h);
++      else if (typeof document !== 'undefined') {
++        cvs = document.createElement('canvas');
++        cvs.width = w;
++        cvs.height = h;
++      }
+       else try {
+         const { Canvas } = require('./canvas-compat');
+         cvs = new Canvas(w, h);

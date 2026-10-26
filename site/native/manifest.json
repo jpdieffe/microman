@@ -1,0 +1,81 @@
+{
+  "version": 2,
+  "emulator": "https://github.com/vgrichina/berrry-wine",
+  "commit": "754c97d3ff22ce0a0cd06d08ac06dc0446fbcbb2",
+  "patches": [
+    "truecolor-palette.patch",
+    "browser-canvas-fallback.patch"
+  ],
+  "files": [
+    {
+      "name": "micro1.dll",
+      "sha256": "341a85f7dd10b0abc15453a14b1a36209c6474f067ca1d204f6a7dd55d633354"
+    },
+    {
+      "name": "micro1.exe",
+      "sha256": "3aaa31d4cf814cddbf2a19d83905751ce8faf46f7d60194d35d31c8127cc684e"
+    },
+    {
+      "name": "micro1.gsf",
+      "sha256": "cd6407d1c70833dfc52cd75c693445d0a9b9001e65d09cc43bfe8b98d406e62f"
+    },
+    {
+      "name": "micro1.img",
+      "sha256": "5c9e28e0b158ae52bdfff18c455d3cf80566774366b3cbf029961bc506579212"
+    },
+    {
+      "name": "micro1.ini",
+      "sha256": "0256fbb95876b320a0bc5416223d09484f654649209626797b1a59680e7f3a2e"
+    },
+    {
+      "name": "micro1.m01",
+      "sha256": "3a9b8840955353c518bc150318ae1906e398ceff1032a1cd20c9be81d6784f8d"
+    },
+    {
+      "name": "micro1.m02",
+      "sha256": "801c30832a61a9014799b7351f6b92a3aefd071cacd01c4a94b316fcaaf494b9"
+    },
+    {
+      "name": "micro1.m03",
+      "sha256": "7ebe07ee134538ea7ef7c9a2b15808370f6b6b703ae9b7cd4579bc0aad1bebd4"
+    },
+    {
+      "name": "micro1.pg1",
+      "sha256": "77e9739f69e988fc53cd03179f04c739073db75d1645d9165ce78c34ec8c6eae"
+    },
+    {
+      "name": "micro1.pg2",
+      "sha256": "1a9c1323e4a711b59d2ccf1316bdbe8c3a1703d2b9362d32800cf172b9c9f83e"
+    },
+    {
+      "name": "micro1.pg3",
+      "sha256": "f8c5e33e5ea6fe36a8d30ea7676a03b9257da21e9c5b141f04a11f90ea4567c9"
+    },
+    {
+      "name": "micro1.pg4",
+      "sha256": "a548a768bec5c6be9de6ef6db77298fcc4022359cc9e15d3ba04424c51d68e41"
+    },
+    {
+      "name": "micro1.rmp",
+      "sha256": "2968d6927688786a289ea16c9f2b5d7c02e3831e966be58da4df3f1bee688927"
+    },
+    {
+      "name": "micro1.wav",
+      "sha256": "dc54dee055919be6926f5af65baf41ae256383fedda28d6478b8dec888010031"
+    },
+    {
+      "name": "microman.url",
+      "sha256": "4c5c4642668690191e978b3628d33989e72fb8c7eedcbddbaf61631aa5145608"
+    },
+    {
+      "name": "readme.txt",
+      "sha256": "8da1499483130f568ef6d59390e5c03bb60b5cf2361e672b712300eb4b4a8b5d"
+    },
+    {
+      "name": "register.txt",
+      "sha256": "d6ef5b4d68d6c652de656b168c676da7e111a07b7bfd6e4dfe8348d61d6d41ca"
+    }
+  ],
+  "wasm": "988c605d38f9fbe3f149c2d7ef4b45aa89f7f54cd6e31c564ecadbf45b20afb2",
+  "compatWasm": "f40de6f22ab49166b378e331854ba41a790ac881907cd835d8388933ccd56fec"
+}

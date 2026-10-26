@@ -1,5 +1,5 @@
-import {PROTOCOL,newCode,parseCode,validInput,validState} from './protocol.js';
-const PREFIX='microman-coop-v1-';
+import {PROTOCOL,newCode,parseCode,validInput,validNativeState} from './protocol.js';
+const PREFIX='microman-original-v2-';
 const advice=()=>/Android/i.test(navigator.userAgent)?'Allow Nearby devices / Local network for your browser in Android Settings, then retry.':'Allow local-network access if asked. Check Wi-Fi isolation or use the TURN option in Connection help.';
 const messageFor=e=>({'peer-unavailable':'That room is not hosted. Check the code and ask your friend to keep the game open.','network':'The room service is unreachable. Check your connection and retry.','server-error':'The room service is unavailable. Try again shortly.','browser-incompatible':'This browser does not support WebRTC. Use current Chrome or Safari.','webrtc':`The direct connection failed. ${advice()}`})[e?.type]||e?.message||String(e);
 
@@ -18,6 +18,10 @@ export class Room{
     if(this.closed)return;
     this.peer.on('error',error=>this.fail(messageFor(error)));
     this.peer.on('disconnected',()=>{if(!this.closed&&!this.peer.destroyed)this.peer.reconnect();});
+    this.peer.on('call',call=>{
+      if(this.isHost||!this.accepted||call.peer!==this.connection?.peer||call.metadata?.protocol!==PROTOCOL){call.close();return;}
+      this.media?.close();this.media=call;call.on('stream',stream=>this.emit('stream',stream));call.on('error',error=>this.emit('error',messageFor(error)));call.answer();
+    });
     this.peer.on('connection',connection=>{
       if(!this.isHost||this.connection){connection.on('open',()=>{connection.send({type:'busy'});setTimeout(()=>connection.close(),150);});return;}
       this.attach(connection);
@@ -51,7 +55,8 @@ export class Room{
       if(data.type==='welcome'&&!this.isHost&&!this.accepted&&data.protocol===PROTOCOL){this.accepted=true;clearTimeout(this.connectTimer);this.emit('connected');return;}
       if(!this.accepted)return;
       if(this.isHost&&validInput(data)&&data.seq>this.lastSeq){this.lastSeq=data.seq;this.lastInput=performance.now();this.emit('input',data);}
-      else if(!this.isHost&&data.type==='state'&&validState(data.state))this.emit('state',data.state);
+      else if(!this.isHost&&data.type==='state'&&validNativeState(data.state))this.emit('state',data.state);
+      else if(this.isHost&&data.type==='video-ready')this.emit('videoReady');
       else if(data.type==='presence'&&typeof data.hidden==='boolean')this.emit('presence',data.hidden);
       else if(data.type==='ping'&&Number.isFinite(data.at))this.send({type:'pong',at:data.at});
       else if(data.type==='pong'&&Number.isFinite(data.at)){this.latency=Math.max(0,Date.now()-data.at);this.emit('latency',this.latency);}
@@ -60,7 +65,8 @@ export class Room{
     connection.on('error',e=>{if(this.connection===connection)this.fail(messageFor(e));});
   }
   input(input){if(this.accepted&&!this.isHost)this.send({type:'input',seq:this.seq++,...input});}
+  stream(stream){if(!this.isHost||!this.accepted)return;this.media?.close();this.media=this.peer.call(this.connection.peer,stream,{metadata:{protocol:PROTOCOL}});this.media?.on('error',error=>this.emit('error',messageFor(error)));}
   send(data){if(!this.connection?.open)return false;try{if(this.connection.dataChannel?.bufferedAmount>256000&&data.type==='state')return false;this.connection.send(data);return true;}catch{return false;}}
   fail(message){clearTimeout(this.connectTimer);if(!this.accepted){const c=this.connection;this.connection=null;c?.close();}this.emit('error',message);}
-  close(){this.closed=true;this.cancelOpen?.();clearInterval(this.timer);clearInterval(this.heartbeat);clearTimeout(this.connectTimer);this.connection?.close();this.peer?.destroy();this.accepted=false;}
+  close(){this.closed=true;this.cancelOpen?.();clearInterval(this.timer);clearInterval(this.heartbeat);clearTimeout(this.connectTimer);this.media?.close();this.connection?.close();this.peer?.destroy();this.accepted=false;}
 }

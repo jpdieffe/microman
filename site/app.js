@@ -1,53 +1,82 @@
-import {World,STEP,emptyInput,clamp} from './physics.js';
-import {Artwork,View} from './view.js';
-import {Sound} from './sound.js';
 import {Room} from './room.js';
 import {parseCode} from './protocol.js';
-const $=id=>document.getElementById(id),sound=new Sound(),keys=new Set(),pointers=new Map();
-let art,view,world,room,mode='',run=0,remote=emptyInput(),connected=false,hadPartner=false,peerHidden=false,connectionError='',hidden=document.hidden,state,last=performance.now(),accumulator=0,networkTime=0,toastUntil=0,regroupUntil=0,action=null,preview,previewWorld;
-const mine=()=>mode==='guest'?1:0;
-const paused=()=>hidden||Boolean(connectionError)||mode==='host'&&(hadPartner&&!connected||connected&&peerHidden);
+import {prepareOriginal} from './isolate.js';
+const $=id=>document.getElementById(id),keys=new Set(),pointers=new Map();
+const empty=()=>({x:0,y:0,jump:false,fire:false,regroup:false});
+let mode='',room=null,frame=null,native=null,remote=empty(),connected=false,ready=false,stream=null,state=null,toastUntil=0,peerHidden=false,paused=false;
 const settings=()=>({turn:$('turn').value.trim(),username:$('username').value,credential:$('credential').value,host:$('peer-host').value.trim(),path:$('peer-path').value.trim()||'/'});
-function input(){const pressed=k=>[...pointers.values()].includes(k),has=(...codes)=>codes.some(c=>keys.has(c));return {x:clamp((has('ArrowRight','KeyD')||pressed('right')?1:0)-(has('ArrowLeft','KeyA')||pressed('left')?1:0),-1,1),y:(has('ArrowDown','KeyS')||pressed('down')?1:0)-(has('ArrowUp','KeyW')||pressed('up')?1:0),jump:has('Space')||pressed('jump'),fire:has('KeyZ','KeyX','ControlLeft','ControlRight')||pressed('fire'),regroup:performance.now()<regroupUntil};}
-function release(){keys.clear();pointers.clear();regroupUntil=0;document.querySelectorAll('[data-key]').forEach(b=>b.classList.remove('active'));room?.input(emptyInput());}
-function toast(text,duration=3200){$('toast').textContent=text;toastUntil=performance.now()+duration;}
-function overlay(kicker,title,text,callback,label){$('overlay').hidden=false;$('overlay-kicker').textContent=kicker;$('overlay-title').textContent=title;$('overlay-text').textContent=text;action=callback;$('overlay-action').hidden=!callback;$('overlay-action').textContent=label||'';$('overlay-secondary').hidden=true;}
-function onEvent(e){sound.play(e);if(e.type==='upgrade')toast(({35:'Power shots! Both players upgraded.',36:'Super jump! Both players upgraded.',37:'Rapid triple shot!',38:'Guided shots!',39:'Shields up for both players!'})[e.sprite]);if(e.type==='checkpoint')toast('Checkpoint saved for this run.');if(e.type==='room'&&e.player===mine())toast('Room '+(e.room+1),1300);if(e.type==='land'&&e.player===mine())toast('On your partner! Jump again to reach higher.',1800);}
-function enter(next){mode=next;hadPartner=false;connected=false;peerHidden=false;connectionError='';remote=emptyInput();state=null;release();$('lobby').hidden=true;$('game').hidden=false;document.body.classList.add('playing');$('options').hidden=true;$('overlay').hidden=true;$('invite').hidden=next==='solo';$('restart').hidden=next==='guest';$('player-name').textContent=next==='guest'?'PLAYER 2 / GOLD':'PLAYER 1 / BLUE';view=new View($('screen'),art,{player:mine(),event:onEvent});view.overview=$('overview').checked;last=performance.now();accumulator=networkTime=0;sound.start();}
-function newGame(){if(mode==='guest')return;world=new World(art.world,++run);if(connected)world.join();publish();toast($('touch').checked?'Up climbs ladders & uses teleporters. Jump onto your partner!':'Arrows to move · Space jumps · Z fires. Up uses teleporters.',5000);}
-function update(next){state=next;view.set(next,mode!=='guest');const me=next.players[mine()],friend=next.players[1-mine()],current=art.world.rooms[me.room];$('health-fill').style.width=me.health+'%';$('health-fill').style.background=me.health<30?'#f17b7b':'#7ce0bf';$('location').textContent=me.room===0?'Start room':`Room ${me.room+1}`;$('location').title=current?.name||'';$('score').textContent=`${next.score.toLocaleString()} points · ${next.visited.length} rooms`;$('partner-status').textContent=friend.active?(friend.room===me.room?'Partner in this room':`Partner: room ${friend.room+1} · Menu → Find partner`):mode==='host'?'Room open · Friend can join anytime':'Solo adventure';$('upgrades').textContent=Object.entries(next.upgrades).filter(([,v])=>v).map(([k])=>({power:'P',jump:'J',rapid:'F',guided:'G'})[k]).join(' · ');
- if(connectionError||mode==='host'&&hadPartner&&!connected)return;
- if(next.paused){overlay('PAUSED','Waiting for both players','Keep both game tabs visible to continue.');return;}
- if(next.phase==='won'){overlay('COMPUTER ESCAPED','Micro mission complete!',`${next.score.toLocaleString()} points · ${next.visited.length} rooms explored.${mode==='guest'?' Your host can start another adventure.':''}`,mode==='guest'?null:newGame,'Play again');return;}
- $('overlay').hidden=true;
+function toast(text,ms=5500){$('toast').textContent=text;toastUntil=performance.now()+ms;}
+function overlay(title,text,action,label='Try again'){$('overlay').hidden=false;$('overlay-title').textContent=title;$('overlay-text').textContent=text;$('overlay-action').hidden=!action;$('overlay-action').textContent=label;$('overlay-action').onclick=action;}
+function input(){const values=new Set(pointers.values()),has=(key,...codes)=>values.has(key)||codes.some(c=>keys.has(c));return{x:Number(has('right','ArrowRight','KeyD'))-Number(has('left','ArrowLeft','KeyA')),y:Number(has('down','ArrowDown','KeyS'))-Number(has('up','ArrowUp','KeyW')),jump:has('jump','Space'),fire:has('fire','KeyZ','KeyX','ControlLeft','ControlRight'),regroup:false};}
+function release(){keys.clear();pointers.clear();document.querySelectorAll('[data-key]').forEach(b=>b.classList.remove('active'));native?.input();room?.input(empty());}
+function pauseIfNeeded(){
+ const next=!!(document.hidden||peerHidden||mode==='host'&&!connected&&room?.hadPartner);
+ if(native&&next!==paused){native.command(806);paused=next;}
+ if(next&&connected)overlay('Paused','Keep both game tabs visible to continue.');else if(ready&&connected)$('overlay').hidden=true;
 }
-function publish(){if(!world)return;const next={...world.snapshot(),paused:paused()};update(next);if(room?.accepted)room.send({type:'state',state:next});}
-async function connect(host,code){room?.close();connected=false;peerHidden=false;connectionError='';remote=emptyInput();const current=room=new Room({
- status:text=>toast(text),
- connected:()=>{if(room!==current)return;connected=true;hadPartner=true;peerHidden=false;connectionError='';room.send({type:'presence',hidden:document.hidden});if(host){world.join();publish();toast('Your friend joined! Jump on each other to reach higher.',5000);}else overlay('CONNECTED','Joining your friend','Loading the original room…');},
- input:value=>{remote=value;},state:next=>update(next),presence:value=>{peerHidden=value;remote=emptyInput();if(host)publish();},latency:ms=>{$('latency').textContent=ms+' ms';},
- disconnected:()=>{if(room!==current)return;connected=false;remote=emptyInput();release();overlay('CONNECTION LOST',host?'Your friend disconnected':'Your host disconnected',host?'The game is paused. Your friend can rejoin the same code, or you can continue solo.':'Ask your host to keep the game open, then reconnect.',host?copyInvite:()=>connect(false,code),host?'Copy invitation':'Reconnect');$('overlay-secondary').hidden=!host;},
- error:message=>{if(room!==current)return;toast(message,10000);if(!current.accepted){connectionError=message;overlay('CONNECTION HELP','Could not connect',message,()=>connect(host,code),'Try again');$('overlay-secondary').hidden=!host;}}
+function update(next){
+ state=next;const me=mode==='guest'?next.guest:next.host;
+ $('location').textContent=`Room ${next.room||1}`;$('score').textContent='Original MicroMan · Adventure 1';
+ $('health-fill').style.width=Math.max(0,Math.min(100,(me?.hp??10)*10))+'%';
+ $('partner-status').textContent=connected?'P1 gold · P2 mint · Jump on each other':mode==='host'?'Room open · Your friend can join anytime':'Solo adventure';
+ if(mode==='host')room?.send({type:'state',state:{room:next.room,host:next.host||null,guest:next.guest||null,paused}});
+}
+async function enter(kind){
+ mode=kind;ready=false;paused=false;peerHidden=false;release();$('lobby').hidden=true;$('game').hidden=false;document.body.classList.add('playing');$('invite').hidden=kind==='solo';$('player-name').textContent=kind==='guest'?'PLAYER 2':'PLAYER 1';$('remote-video').hidden=kind!=='guest';$('options').hidden=true;
+ $('restart').disabled=kind==='guest';$('native-menu').disabled=kind==='guest';$('music').disabled=kind==='guest';
+ if(kind==='guest'){overlay('Connecting to your friend…','Keep this tab open.');return;}
+ overlay('Starting MicroMan','Loading your original Windows game…');
+ frame=document.createElement('iframe');frame.id='native-frame';frame.title='Original MicroMan';frame.allow='autoplay; fullscreen';frame.src='native/index.html';$('arena').prepend(frame);
+}
+function startStream(){if(!native||!room?.accepted||!ready)return;native.setPartner(true);if(!stream)stream=native.stream();room.stream(stream);}
+async function connect(host,code){
+ if(!host)ready=false;
+ room?.close();connected=false;remote=empty();
+ const current=room=new Room({
+  status:text=>toast(text),
+  connected:()=>{if(room!==current)return;connected=true;current.hadPartner=true;peerHidden=false;native?.setPartner(true);room.send({type:'presence',hidden:document.hidden});if(host){pauseIfNeeded();toast('Your friend joined. Jump onto each other to reach higher.');}else{overlay('Connected','Waiting for the original game video…');room.send({type:'video-ready'});}},
+  videoReady:startStream,
+  stream:async media=>{const video=$('remote-video');video.srcObject=media;video.muted=true;try{await video.play();ready=true;$('overlay').hidden=true;toast('Tap Enable sound to hear the game.');$('enable-audio').hidden=false;}catch{overlay('Game connected','Tap Play to start the game video.',async()=>{await video.play();ready=true;$('overlay').hidden=true;},'Play');}},
+  input:value=>{remote=value;native?.remote(value);if(value.regroup)native?.regroup();},
+  state:next=>{update(next);if(next.paused)overlay('Paused','Waiting for the host to resume.');else if(ready)$('overlay').hidden=true;},
+  presence:value=>{peerHidden=value;remote=empty();native?.remote(remote);pauseIfNeeded();},
+  latency:ms=>$('latency').textContent=ms+' ms',
+  disconnected:()=>{if(room!==current)return;connected=false;remote=empty();native?.remote(remote);release();pauseIfNeeded();overlay('Connection lost',host?'Your friend can rejoin the same room, or you can continue solo.':'Ask your host to keep the room open, then reconnect.',host?continueSolo:()=>connect(false,code),host?'Continue solo':'Reconnect');},
+  error:message=>{if(room!==current)return;toast(message,12000);if(!current.accepted)overlay('Could not connect',message,()=>connect(host,code));}
  },settings());
- if(!host)overlay('LINK UP','Connecting to your friend…','Keep this tab open.');else toast('Opening your two-character room…');
- try{const result=await current.open(host,code);if(room!==current)return;$('room-code').textContent=result;if(host)toast(`Room ${result} is open. Tap ROOM to copy the invitation.`,9000);}catch(e){if(room===current){connectionError=e.message;overlay('CONNECTION HELP','Could not open the room',e.message,()=>connect(host,code),'Try again');if(host)$('overlay-secondary').hidden=false;}}
+ try{const result=await current.open(host,code);if(room!==current)return;$('room-code').textContent=result;toast(host?`Room ${result} is open. Tap ROOM to copy the invitation.`:'Connecting…',9000);}catch(error){if(room===current)overlay('Could not open the room',error.message,()=>connect(host,code));}
 }
-async function copyInvite(){if(!room?.code)return;const url=new URL(location.href);url.search='';url.hash=`room=${room.code}`;try{await navigator.clipboard.writeText(url.href);toast(`Invitation copied! Room ${room.code}.`);if(!$('overlay').hidden)$('overlay-text').textContent=`Invitation copied. Room ${room.code}.`;}catch{toast(url.href,15000);if(!$('overlay').hidden)$('overlay-text').textContent=url.href;}}
-$('host').onclick=()=>{enter('host');newGame();connect(true);};$('solo').onclick=()=>{enter('solo');newGame();};$('join-form').onsubmit=e=>{e.preventDefault();const code=parseCode($('code').value);if(!code){$('status').textContent='Enter your friend’s two-character room code.';return;}world=null;enter('guest');connect(false,code);};$('invite').onclick=copyInvite;$('overlay-action').onclick=()=>action?.();
-$('overlay-secondary').onclick=()=>{if(connectionError){room?.close();room=null;mode='solo';$('invite').hidden=true;}connectionError='';hadPartner=false;peerHidden=false;world.players[1].active=false;remote=emptyInput();publish();};
-const toggleMenu=()=>{$('options').hidden=!$('options').hidden;$('menu-toggle').setAttribute('aria-expanded',String(!$('options').hidden));release();};$('menu-toggle').onclick=toggleMenu;$('home').onclick=toggleMenu;
-$('regroup').onclick=()=>{regroupUntil=performance.now()+250;$('options').hidden=true;if(!state?.players[1-mine()].active)toast('Your friend has not joined yet.');};$('restart').onclick=()=>{$('options').hidden=true;newGame();};
-$('leave').onclick=()=>{room?.close();room=null;world=null;mode='';connected=false;hadPartner=false;release();$('game').hidden=true;$('lobby').hidden=false;document.body.classList.remove('playing');$('status').textContent='Ready for your next adventure.';};
-$('sound').onchange=()=>{sound.enabled=$('sound').checked;sound.start();};$('music').onchange=()=>{sound.music=$('music').checked;sound.start();};$('overview').onchange=()=>{if(view){view.overview=$('overview').checked;view.camera=null;}};$('touch').checked=matchMedia('(pointer:coarse)').matches;$('touch').onchange=()=>document.body.classList.toggle('touch',$('touch').checked);$('touch').onchange();
-$('fullscreen').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else if(document.documentElement.requestFullscreen)await document.documentElement.requestFullscreen();else toast('Rotate your phone for a wider view.');}catch{toast('Rotate your phone for a wider view.');}};
-const controls=['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyW','KeyA','KeyS','KeyD','KeyZ','KeyX','Space','ControlLeft','ControlRight'];addEventListener('keydown',e=>{if(mode&&!(e.target instanceof HTMLInputElement)&&controls.includes(e.code)){e.preventDefault();keys.add(e.code);}});addEventListener('keyup',e=>keys.delete(e.code));addEventListener('blur',release);document.addEventListener('visibilitychange',()=>{hidden=document.hidden;release();room?.send({type:'presence',hidden});if(world)publish();last=performance.now();accumulator=0;});
-document.querySelectorAll('[data-key]').forEach(b=>{b.onpointerdown=e=>{e.preventDefault();b.setPointerCapture(e.pointerId);pointers.set(e.pointerId,b.dataset.key);b.classList.add('active');sound.start();};const end=e=>{pointers.delete(e.pointerId);b.classList.toggle('active',[...pointers.values()].includes(b.dataset.key));};b.onpointerup=end;b.onpointercancel=end;b.onlostpointercapture=end;});
+function continueSolo(){if(room)room.hadPartner=false;peerHidden=false;native?.setPartner(false);pauseIfNeeded();$('overlay').hidden=true;}
+async function begin(kind){try{await enter(kind);if(kind==='host')await connect(true);}catch(e){overlay('Could not start',e.message,()=>location.reload());}}
+addEventListener('message',event=>{
+ if(event.origin!==location.origin||event.source!==frame?.contentWindow||event.data?.source!=='microman-original')return;
+ const data=event.data;
+ if(data.type==='key'&&controls.includes(data.code)){if(data.down)keys.add(data.code);else keys.delete(data.code);}
+ if(data.type==='release')release();
+ if(data.type==='ready'){native=frame.contentWindow.original;ready=true;native.audio();native.setPartner(connected);if(connected)startStream();$('overlay').hidden=true;pauseIfNeeded();}
+ if(data.type==='state'&&data.state)update(data.state);
+ if(data.type==='error')overlay('Could not start the original game',data.message,()=>location.reload());
+});
+$('host').onclick=()=>begin('host');$('solo').onclick=()=>begin('solo');
+$('join-form').onsubmit=async event=>{event.preventDefault();const code=parseCode($('code').value);if(!code){$('status').textContent='Enter a two-character room code.';return;}await enter('guest');connect(false,code);};
+$('invite').onclick=async()=>{if(!room?.code)return;const url=new URL(location.href);url.hash='room='+room.code;try{await navigator.clipboard.writeText(url.href);toast(`Invitation copied. Room ${room.code}.`);}catch{toast(url.href,20000);}};
+const menu=()=>{$('options').hidden=!$('options').hidden;$('menu-toggle').setAttribute('aria-expanded',String(!$('options').hidden));release();};$('home').onclick=menu;$('menu-toggle').onclick=menu;
+$('regroup').onclick=()=>{if(native)native.regroup();else room?.input({...empty(),regroup:true});$('options').hidden=true;};
+$('restart').onclick=()=>{native?.restart();$('options').hidden=true;};
+$('native-menu').onchange=()=>{native?.menu($('native-menu').checked);$('options').hidden=true;};
+$('sound').onchange=()=>{if(mode==='guest')$('remote-video').muted=!$('sound').checked;else{native?.audio();native?.command(910);}};
+$('music').onchange=()=>{native?.audio();native?.command(942);};
+$('enable-audio').onclick=()=>{const video=$('remote-video');video.muted=false;video.play().catch(()=>{});$('enable-audio').hidden=true;};
+$('touch').checked=matchMedia('(pointer:coarse)').matches;$('touch').onchange=()=>document.body.classList.toggle('touch',$('touch').checked);$('touch').onchange();
+$('fullscreen').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();}catch{toast('Rotate your phone for a wider view.');}};
+$('leave').onclick=async()=>{room?.close();room=null;release();stream?.getTracks().forEach(t=>t.stop());stream=null;await native?.stop();frame?.remove();frame=null;native=null;mode='';connected=false;ready=false;$('remote-video').srcObject=null;$('game').hidden=true;$('lobby').hidden=false;document.body.classList.remove('playing');};
+const controls=['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyW','KeyA','KeyS','KeyD','KeyZ','KeyX','Space','ControlLeft','ControlRight'];
+addEventListener('keydown',event=>{if(mode&&!(event.target instanceof HTMLInputElement)&&controls.includes(event.code)){event.preventDefault();keys.add(event.code);native?.audio();}});
+addEventListener('keyup',event=>keys.delete(event.code));addEventListener('blur',release);
+document.addEventListener('visibilitychange',()=>{release();room?.send({type:'presence',hidden:document.hidden});pauseIfNeeded();});
+document.querySelectorAll('[data-key]').forEach(button=>{button.onpointerdown=event=>{event.preventDefault();button.setPointerCapture(event.pointerId);pointers.set(event.pointerId,button.dataset.key);button.classList.add('active');native?.audio();};const end=event=>{pointers.delete(event.pointerId);button.classList.toggle('active',[...pointers.values()].includes(button.dataset.key));};button.onpointerup=end;button.onpointercancel=end;button.onlostpointercapture=end;});
 const shared=parseCode(new URLSearchParams(location.hash.slice(1)).get('room'));if(shared)$('code').value=shared;
-function animate(now){const elapsed=Math.min(.1,(now-last)/1000);last=now;if(!mode&&preview){previewWorld.time+=elapsed;preview.set(previewWorld.snapshot(),true);preview.draw(now);}
- if(mode&&world){if(!paused()){accumulator+=elapsed;while(accumulator>=STEP){world.inputs[0]=input();world.inputs[1]=remote;world.step();accumulator-=STEP;}}else accumulator=0;networkTime+=elapsed;if(networkTime>=.05){networkTime=0;publish();}}
- else if(mode==='guest'){networkTime+=elapsed;if(networkTime>=1/30){networkTime=0;room?.input(input());}}
- if(mode)view?.draw(now);sound.tick(Boolean(mode)&&!hidden&&!state?.paused);if(now>toastUntil)$('toast').textContent='';requestAnimationFrame(animate);
-}
+setInterval(()=>{if(mode==='guest')room?.input(input());else if(native){native.input(paused?empty():input());native.remote(paused?empty():remote);}if(performance.now()>toastUntil)$('toast').textContent='';},33);
 for(const id of ['host','solo','join'])$(id).disabled=true;
-try{art=await new Artwork().load();previewWorld=new World(art.world);previewWorld.join();previewWorld.events=[];Object.assign(previewWorld.players[0],{x:115,y:260,ground:true,invulnerable:0});Object.assign(previewWorld.players[1],{x:115,y:228,ground:true,support:0,invulnerable:0});preview=new View($('preview'),art,{preview:true});for(const id of ['host','solo','join'])$(id).disabled=false;$('status').textContent='Ready. No install needed. Your friend can join anytime.';requestAnimationFrame(animate);}catch(e){$('status').textContent=`Could not load MicroMan. Reload to retry. ${e.message}`;}
-if(new URLSearchParams(location.search).has('debug'))window.micro={get world(){return world;},get state(){return state;},get view(){return view;},get room(){return room;},input,paused};
+try{await prepareOriginal();sessionStorage.removeItem('microman-isolation-reload');for(const id of ['host','solo','join'])$(id).disabled=false;$('status').textContent='Ready. Original game, online co-op, no installation.';}catch(error){$('status').textContent=error.message;}
+if(new URLSearchParams(location.search).has('debug'))window.micro={get native(){return native;},get state(){return state;},get room(){return room;},input};
