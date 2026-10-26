@@ -1,0 +1,8 @@
+export class Sound{
+ constructor(){this.enabled=true;this.music=false;this.lastTick=0;this.note=0;this.voices=0;}
+ async start(){try{this.ctx??=new AudioContext();await this.ctx.resume();if(!this.score)this.score=await(await fetch('assets/music1.json')).json();}catch{}}
+ tone(pitch,duration=.12,volume=.04,type='square',when){if(!this.ctx||this.ctx.state!=='running')return;const time=when??this.ctx.currentTime,o=this.ctx.createOscillator(),g=this.ctx.createGain();o.type=type;o.frequency.value=pitch;g.gain.setValueAtTime(volume,time);g.gain.exponentialRampToValueAtTime(.0001,time+duration);o.connect(g).connect(this.ctx.destination);o.start(time);o.stop(time+duration+.02);this.voices++;o.onended=()=>{this.voices--;o.disconnect();g.disconnect();};}
+ play(e){if(!this.enabled)return;const tones={jump:[420,.12],land:[170,.08],shoot:[880,.05],hit:[95,.18],death:[65,.5],upgrade:[1000,.4],energy:[660,.2],checkpoint:[740,.3],teleport:[520,.3],spring:[600,.18],win:[1200,.8],explosion:[75,.3],spark:[140,.06],respawn:[360,.3]};if(tones[e.type])this.tone(...tones[e.type]);}
+ tick(playing){if(!this.ctx||!this.score||!this.music||!playing||this.ctx.state!=='running'){this.musicStart=null;this.note=0;return;}const now=this.ctx.currentTime;if(this.musicStart==null)this.musicStart=now+.05;if(now-this.musicStart>this.score.duration){this.musicStart=now;this.note=0;}
+  while(this.note<this.score.notes.length&&this.score.notes[this.note][0]<now-this.musicStart+.12){const [at,length,pitch,velocity,channel]=this.score.notes[this.note++],time=this.musicStart+at;if(time<now-.1||this.voices>20)continue;this.tone(440*2**((pitch-69)/12),Math.min(length,1.6),velocity/127*.012,channel===9?'triangle':'sine',Math.max(now,time));}}
+}
